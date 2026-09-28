@@ -1,0 +1,14 @@
+services:
+  mongo:
+    image: mongodb/mongodb-atlas-local:latest
+    container_name: jobmatch-mongo
+    environment:
+      MONGODB_INITDB_ROOT_USERNAME: jobmatch
+      MONGODB_INITDB_ROOT_PASSWORD: jobmatch123
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodata:/data/db
+
+volumes:
+  mongodata:

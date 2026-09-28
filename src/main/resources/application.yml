@@ -1,0 +1,14 @@
+spring:
+    application:
+        name: job-match-tracker
+    mongodb:
+        uri: mongodb://jobmatch:jobmatch123@localhost:27017/jobmatch?authSource=admin&directConnection=true
+
+management:
+    endpoints:
+        web:
+            exposure:
+                include: health,info
+    endpoint:
+        health:
+            show-details: always

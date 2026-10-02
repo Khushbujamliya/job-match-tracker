@@ -14,18 +14,23 @@ import org.springframework.stereotype.Service;
 public class JobService {
 
     private final JobRepository jobRepository;
+    private final EmbeddingService embeddingService;
 
-    public JobService(JobRepository jobRepository) {
+    public JobService(JobRepository jobRepository, EmbeddingService embeddingService) {
         this.jobRepository = jobRepository;
+        this.embeddingService = embeddingService;
     }
 
     public JobResponse create(JobRequest request) {
+        List<Float> embedding = embeddingService.embed(buildEmbeddingText(request));
+
         Job job = Job.builder()
                 .title(request.getTitle())
                 .company(request.getCompany())
                 .description(request.getDescription())
                 .requiredSkills(request.getRequiredSkills())
                 .minExperienceYears(request.getMinExperienceYears())
+                .embedding(embedding)
                 .createdAt(Instant.now())
                 .build();
 
@@ -59,5 +64,13 @@ public class JobService {
                 .minExperienceYears(job.getMinExperienceYears())
                 .createdAt(job.getCreatedAt())
                 .build();
+    }
+
+    private String buildEmbeddingText(JobRequest request) {
+        return String.join(" ",
+                request.getTitle(),
+                request.getCompany(),
+                request.getDescription(),
+                String.join(", ", request.getRequiredSkills()));
     }
 }

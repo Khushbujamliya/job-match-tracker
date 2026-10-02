@@ -14,23 +14,27 @@ import org.springframework.stereotype.Service;
 public class ResumeService {
 
     private final ResumeRepository resumeRepository;
+    private final EmbeddingService embeddingService;
 
-    public ResumeService(ResumeRepository resumeRepository) {
+    public ResumeService(ResumeRepository resumeRepository, EmbeddingService embeddingService) {
         this.resumeRepository = resumeRepository;
+        this.embeddingService = embeddingService;
     }
 
     public ResumeResponse create(ResumeRequest request) {
+        List<Float> embedding = embeddingService.embed(buildEmbeddingText(request));
+
         Resume resume = Resume.builder()
                 .name(request.getName())
                 .email(request.getEmail())
                 .skills(request.getSkills())
                 .experienceYears(request.getExperienceYears())
                 .rawText(request.getRawText())
+                .embedding(embedding)
                 .createdAt(Instant.now())
                 .build();
 
-        Resume saved = resumeRepository.save(resume);
-        return toResponse(saved);
+        return toResponse(resumeRepository.save(resume));
     }
 
     public List<ResumeResponse> getAll() {
@@ -62,5 +66,13 @@ public class ResumeService {
                 .experienceYears(resume.getExperienceYears())
                 .createdAt(resume.getCreatedAt())
                 .build();
+    }
+
+    private String buildEmbeddingText(ResumeRequest request) {
+        return String.join(" ",
+                request.getName(),
+                String.join(", ", request.getSkills()),
+                request.getExperienceYears() != null ? request.getExperienceYears() + " years experience" : "",
+                request.getRawText() != null ? request.getRawText() : "");
     }
 }

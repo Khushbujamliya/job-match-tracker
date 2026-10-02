@@ -26,4 +26,5 @@ public class Resume {
     private Integer experienceYears;
     private String rawText;
     private Instant createdAt;
+    private List<Float> embedding;
 }

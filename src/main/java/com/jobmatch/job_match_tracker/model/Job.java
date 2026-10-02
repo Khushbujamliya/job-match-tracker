@@ -26,4 +26,5 @@ public class Job {
     private List<String> requiredSkills;
     private Integer minExperienceYears;
     private Instant createdAt;
+    private List<Float> embedding;
 }

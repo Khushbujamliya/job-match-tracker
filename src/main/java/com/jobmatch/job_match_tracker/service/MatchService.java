@@ -1,10 +1,14 @@
 package com.jobmatch.job_match_tracker.service;
 
+import java.time.Instant;
 import java.util.List;
 
 import com.jobmatch.job_match_tracker.dto.JobMatchResult;
 import com.jobmatch.job_match_tracker.exception.ResourceNotFoundException;
+import com.jobmatch.job_match_tracker.model.Match;
 import com.jobmatch.job_match_tracker.model.Resume;
+import com.jobmatch.job_match_tracker.repository.JobRepository;
+import com.jobmatch.job_match_tracker.repository.MatchRepository;
 import com.jobmatch.job_match_tracker.repository.ResumeRepository;
 import org.bson.Document;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -16,10 +20,15 @@ import org.springframework.stereotype.Service;
 public class MatchService {
 
     private final ResumeRepository resumeRepository;
+    private final JobRepository jobRepository;
+    private final MatchRepository matchRepository;
     private final MongoTemplate mongoTemplate;
 
-    public MatchService(ResumeRepository resumeRepository, MongoTemplate mongoTemplate) {
+    public MatchService(ResumeRepository resumeRepository, JobRepository jobRepository,
+            MatchRepository matchRepository, MongoTemplate mongoTemplate) {
         this.resumeRepository = resumeRepository;
+        this.jobRepository = jobRepository;
+        this.matchRepository = matchRepository;
         this.mongoTemplate = mongoTemplate;
     }
 
@@ -31,6 +40,23 @@ public class MatchService {
             throw new IllegalStateException("Resume has no embedding yet: " + resumeId);
         }
 
+        List<JobMatchResult> results = runVectorSearch(resume.getEmbedding(), limit);
+
+        for (JobMatchResult result : results) {
+            if (jobRepository.existsById(result.getJobId())) {
+                matchRepository.save(Match.builder()
+                        .resumeId(resumeId)
+                        .jobId(result.getJobId())
+                        .score(result.getMatchScore())
+                        .createdAt(Instant.now())
+                        .build());
+            }
+        }
+
+        return results;
+    }
+
+    private List<JobMatchResult> runVectorSearch(List<Float> embedding, int limit) {
         String vectorSearchStage = """
                 { "$vectorSearch": {
                     "index": "jobs_vector_index",
@@ -39,7 +65,7 @@ public class MatchService {
                     "numCandidates": 50,
                     "limit": %d
                 } }
-                """.formatted(resume.getEmbedding().toString(), limit);
+                """.formatted(embedding.toString(), limit);
 
         String projectStage = """
                 { "$project": {
@@ -52,9 +78,9 @@ public class MatchService {
                 Aggregation.stage(vectorSearchStage),
                 Aggregation.stage(projectStage));
 
-        AggregationResults<Document> results = mongoTemplate.aggregate(aggregation, "jobs", Document.class);
+        AggregationResults<Document> agg = mongoTemplate.aggregate(aggregation, "jobs", Document.class);
 
-        return results.getMappedResults().stream()
+        return agg.getMappedResults().stream()
                 .map(doc -> JobMatchResult.builder()
                         .jobId(doc.getObjectId("_id").toString())
                         .title(doc.getString("title"))

@@ -3,6 +3,10 @@ spring:
         name: job-match-tracker
     mongodb:
         uri: mongodb://jobmatch:jobmatch123@localhost:27017/jobmatch?authSource=admin&directConnection=true
+
+    kafka:
+        bootstrap-servers: localhost:9092
+
 ollama:
     base-url: http://localhost:11434
     embedding-model: nomic-embed-text

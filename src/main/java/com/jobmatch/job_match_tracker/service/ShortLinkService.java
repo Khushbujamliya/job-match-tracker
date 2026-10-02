@@ -18,9 +18,11 @@ public class ShortLinkService {
     private final SecureRandom random = new SecureRandom();
 
     private final ShortLinkRepository shortLinkRepository;
+    private final LinkClickProducer linkClickProducer;
 
-    public ShortLinkService(ShortLinkRepository shortLinkRepository) {
+    public ShortLinkService(ShortLinkRepository shortLinkRepository, LinkClickProducer linkClickProducer) {
         this.shortLinkRepository = shortLinkRepository;
+        this.linkClickProducer = linkClickProducer;
     }
 
     public ShortLinkResponse create(ShortLinkRequest request) {
@@ -43,6 +45,7 @@ public class ShortLinkService {
 
         shortLink.setClickCount(shortLink.getClickCount() + 1);
         shortLinkRepository.save(shortLink);
+        linkClickProducer.publishClick(code);
 
         return shortLink.getTargetUrl();
     }

@@ -1,7 +1,6 @@
 package com.jobmatch.job_match_tracker.service;
 
 import com.jobmatch.job_match_tracker.dto.LinkClickEvent;
-import com.jobmatch.job_match_tracker.model.ShortLink;
 import com.jobmatch.job_match_tracker.repository.ShortLinkRepository;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;

@@ -9,10 +9,12 @@ import com.jobmatch.job_match_tracker.service.MatchService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
+@RequestMapping("/api/resumes/{resumeId}")
 public class MatchController {
 
     private final MatchService matchService;
@@ -23,14 +25,14 @@ public class MatchController {
         this.matchRepository = matchRepository;
     }
 
-    @GetMapping("/api/resumes/{resumeId}/matches")
+    @GetMapping("/matches")
     public ResponseEntity<List<JobMatchResult>> findMatches(
             @PathVariable String resumeId,
             @RequestParam(defaultValue = "5") int limit) {
         return ResponseEntity.ok(matchService.findMatchingJobs(resumeId, limit));
     }
 
-    @GetMapping("/api/resumes/{resumeId}/match-history")
+    @GetMapping("/match-history")
     public ResponseEntity<List<Match>> getHistory(@PathVariable String resumeId) {
         return ResponseEntity.ok(matchRepository.findByResumeId(resumeId));
     }

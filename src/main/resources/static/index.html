@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Job-Match & Referral Tracker</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #f4f6f8; color: #1c2430; }
+  header { background: #1c2430; color: #fff; padding: 20px 32px; }
+  header h1 { margin: 0; font-size: 22px; }
+  header p { margin: 6px 0 0; color: #b9c2cf; font-size: 14px; }
+  main { max-width: 1000px; margin: 24px auto; padding: 0 16px; display: grid; gap: 20px; }
+  section { background: #fff; border-radius: 10px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  h2 { margin: 0 0 12px; font-size: 17px; }
+  label { display: block; font-size: 13px; margin: 10px 0 4px; color: #4a5565; }
+  input, textarea, select { width: 100%; padding: 8px 10px; border: 1px solid #cfd6df; border-radius: 6px; font: inherit; box-sizing: border-box; }
+  button { margin-top: 12px; padding: 9px 16px; border: 0; border-radius: 6px; background: #2563eb; color: #fff; font: inherit; cursor: pointer; }
+  button:hover { background: #1d4fd0; }
+  .msg { margin-top: 10px; font-size: 14px; }
+  .ok { color: #15803d; } .err { color: #b91c1c; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid #e5e9ef; }
+  .bar { background: #e5e9ef; border-radius: 4px; height: 10px; width: 160px; display: inline-block; vertical-align: middle; }
+  .bar span { display: block; height: 10px; border-radius: 4px; background: #16a34a; }
+  code { background: #eef1f5; padding: 2px 6px; border-radius: 4px; }
+  a { color: #2563eb; }
+  @media (max-width: 700px) { .row { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>AI Job-Match &amp; Referral Tracker</h1>
+  <p>Resumes and jobs are embedded by a local AI model and matched with MongoDB vector search. Link clicks are counted asynchronously through Kafka.</p>
+</header>
+<main>
+
+  <section>
+    <h2>1. Add a job</h2>
+    <div class="row">
+      <div><label>Title</label><input id="jTitle" value="Backend Developer"></div>
+      <div><label>Company</label><input id="jCompany" value="Acme Corp"></div>
+    </div>
+    <label>Description</label>
+    <textarea id="jDesc" rows="2">Build REST APIs using Java and Spring Boot, work with MongoDB and Docker</textarea>
+    <div class="row">
+      <div><label>Required skills (comma separated)</label><input id="jSkills" value="Java, Spring Boot, MongoDB"></div>
+      <div><label>Minimum experience (years)</label><input id="jExp" type="number" value="1"></div>
+    </div>
+    <button onclick="addJob()">Add job</button>
+    <div id="jMsg" class="msg"></div>
+  </section>
+
+  <section>
+    <h2>2. Add a resume</h2>
+    <div class="row">
+      <div><label>Name</label><input id="rName" value="Khushbu"></div>
+      <div><label>Email</label><input id="rEmail" value="khushbu@example.com"></div>
+    </div>
+    <label>About / resume text</label>
+    <textarea id="rText" rows="2">BTech graduate experienced in building backend REST APIs with Java and Spring Boot</textarea>
+    <div class="row">
+      <div><label>Skills (comma separated)</label><input id="rSkills" value="Java, Spring Boot, MongoDB, Docker"></div>
+      <div><label>Experience (years)</label><input id="rExp" type="number" value="0"></div>
+    </div>
+    <button onclick="addResume()">Add resume</button>
+    <div id="rMsg" class="msg"></div>
+  </section>
+
+  <section>
+    <h2>3. Find matching jobs (AI vector search)</h2>
+    <label>Choose a resume</label>
+    <select id="resumeSelect"></select>
+    <button onclick="findMatches()">Find matches</button>
+    <div id="mMsg" class="msg"></div>
+    <table id="matchTable" style="display:none">
+      <thead><tr><th>Job</th><th>Company</th><th>Match</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>4. Create a trackable referral link</h2>
+    <label>Target URL</label>
+    <input id="lUrl" value="https://www.linkedin.com/in/khushbu-jamliya">
+    <button onclick="addLink()">Create short link</button>
+    <div id="lMsg" class="msg"></div>
+  </section>
+
+  <section>
+    <h2>5. Click dashboard</h2>
+    <p style="font-size:14px;margin:0 0 8px">Open a short link a few times, then refresh. Counts update through Kafka after a moment.</p>
+    <button onclick="loadDashboard()">Refresh</button>
+    <table id="dashTable" style="margin-top:12px">
+      <thead><tr><th>Short link</th><th>Target</th><th>Clicks</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+</main>
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const list = s => s.split(',').map(x => x.trim()).filter(Boolean);
+const show = (id, text, ok) => { const e = document.getElementById(id); e.className = 'msg ' + (ok ? 'ok' : 'err'); e.textContent = text; };
+
+async function call(method, url, body) {
+  const res = await fetch(url, {
+    method, headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    const detail = data && data.errors ? Object.values(data.errors).join(', ') : (data && data.error) || res.status;
+    throw new Error(detail);
+  }
+  return data;
+}
+
+async function addJob() {
+  try {
+    const j = await call('POST', '/api/jobs', {
+      title: v('jTitle'), company: v('jCompany'), description: v('jDesc'),
+      requiredSkills: list(v('jSkills')), minExperienceYears: Number(v('jExp'))
+    });
+    show('jMsg', 'Added job: ' + j.title + ' at ' + j.company, true);
+  } catch (e) { show('jMsg', 'Error: ' + e.message, false); }
+}
+
+async function addResume() {
+  try {
+    const r = await call('POST', '/api/resumes', {
+      name: v('rName'), email: v('rEmail'), rawText: v('rText'),
+      skills: list(v('rSkills')), experienceYears: Number(v('rExp'))
+    });
+    show('rMsg', 'Added resume for ' + r.name, true);
+    loadResumes(r.id);
+  } catch (e) { show('rMsg', 'Error: ' + e.message, false); }
+}
+
+async function loadResumes(selectId) {
+  try {
+    const rs = await call('GET', '/api/resumes');
+    const sel = document.getElementById('resumeSelect');
+    sel.innerHTML = rs.map(r => `<option value="${esc(r.id)}">${esc(r.name)} (${esc(r.email)})</option>`).join('');
+    if (selectId) sel.value = selectId;
+  } catch (e) { show('mMsg', 'Error: ' + e.message, false); }
+}
+
+async function findMatches() {
+  const id = v('resumeSelect');
+  if (!id) { show('mMsg', 'Add a resume first.', false); return; }
+  show('mMsg', 'Searching...', true);
+  try {
+    const ms = await call('GET', `/api/resumes/${encodeURIComponent(id)}/matches`);
+    const table = document.getElementById('matchTable');
+    table.querySelector('tbody').innerHTML = ms.map(m => {
+      const pct = Math.round(m.matchScore * 100);
+      return `<tr><td>${esc(m.title)}</td><td>${esc(m.company)}</td>
+        <td><span class="bar"><span style="width:${pct}%"></span></span> ${pct}%</td></tr>`;
+    }).join('');
+    table.style.display = ms.length ? '' : 'none';
+    show('mMsg', ms.length ? 'Ranked by semantic similarity.' : 'No matches yet. Add a job first.', ms.length > 0);
+  } catch (e) { show('mMsg', 'Error: ' + e.message, false); }
+}
+
+async function addLink() {
+  try {
+    const l = await call('POST', '/api/links', { targetUrl: v('lUrl') });
+    const url = location.origin + '/r/' + l.code;
+    const box = document.getElementById('lMsg');
+    box.className = 'msg ok';
+    box.innerHTML = 'Short link: <a href="' + esc(url) + '" target="_blank">' + esc(url) + '</a>';
+  } catch (e) { show('lMsg', 'Error: ' + e.message, false); }
+}
+
+async function loadDashboard() {
+  try {
+    const ls = await call('GET', '/api/dashboard/top-links');
+    document.querySelector('#dashTable tbody').innerHTML = ls.map(l =>
+      `<tr><td><a href="/r/${esc(l.code)}" target="_blank"><code>/r/${esc(l.code)}</code></a></td>
+       <td>${esc(l.targetUrl)}</td><td>${esc(l.clickCount)}</td></tr>`).join('');
+  } catch (e) { /* leave table as is */ }
+}
+
+function v(id) { return document.getElementById(id).value; }
+loadResumes(); loadDashboard();
+</script>
+</body>
+</html>

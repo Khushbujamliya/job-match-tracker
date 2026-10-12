@@ -13,6 +13,7 @@ import com.jobmatch.job_match_tracker.repository.ShortLinkRepository;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 
 @Service
 public class ShortLinkService {
@@ -26,12 +27,14 @@ public class ShortLinkService {
     private final RedisTemplate<String, String> redisTemplate;
     private final ShortLinkRepository shortLinkRepository;
     private final LinkClickProducer linkClickProducer;
+    private final String baseUrl;
 
     public ShortLinkService(ShortLinkRepository shortLinkRepository, LinkClickProducer linkClickProducer,
-            StringRedisTemplate redisTemplate) {
+            StringRedisTemplate redisTemplate, @Value("${app.base-url:http://localhost:8080}") String baseUrl) {
         this.shortLinkRepository = shortLinkRepository;
         this.linkClickProducer = linkClickProducer;
         this.redisTemplate = redisTemplate;
+        this.baseUrl = baseUrl;
     }
 
     public ShortLinkResponse create(ShortLinkRequest request) {
@@ -87,7 +90,7 @@ public class ShortLinkService {
     private ShortLinkResponse toResponse(ShortLink shortLink) {
         return ShortLinkResponse.builder()
                 .code(shortLink.getCode())
-                .shortUrl("http://localhost:8080/r/" + shortLink.getCode())
+                .shortUrl(baseUrl + "/r/" + shortLink.getCode())
                 .targetUrl(shortLink.getTargetUrl())
                 .clickCount(shortLink.getClickCount())
                 .createdAt(shortLink.getCreatedAt())

@@ -4,6 +4,8 @@ services:
     container_name: jobmatch-app
     network_mode: host
     restart: unless-stopped
+    environment:
+      APP_BASE_URL: http://137.23.36.252:8080
     depends_on:
       - mongo
       - kafka

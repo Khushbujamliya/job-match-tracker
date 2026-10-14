@@ -2,104 +2,195 @@
 
 # AI Job-Match & Referral Tracker
 
-An AI-powered backend that matches resumes to job postings using vector embeddings, and tracks referral links with click analytics — built to demonstrate backend system design, not just CRUD.
+A Java / Spring Boot backend that **ranks job postings for a resume by meaning** (AI embeddings + MongoDB vector search) and creates **trackable referral links** whose clicks are counted asynchronously through **Kafka**, with **Redis** caching hot lookups. It ships with a small web UI and runs as a full Docker Compose stack.
 
-## What it does
+## Demo
 
-- Stores resumes and job postings, and generates AI embeddings for each using a local LLM (Ollama + `nomic-embed-text`)
-- Finds the best-matching jobs for a resume using MongoDB Atlas **Vector Search** (semantic similarity, not keyword matching)
-- Generates short, trackable referral links for job applications
-- Tracks link clicks **asynchronously** via Kafka, so the redirect never waits on a database write
-- Caches hot link lookups in **Redis** to avoid repeated database reads
-- Exposes a small analytics dashboard (top links, per-job link stats)
+- ▶ **Video walkthrough (2.5 min):** https://drive.google.com/file/d/1959BJGyBitg2MZlVNWuKThLZLXxPkWQM/view?usp=drive_link
+- Screenshots:
+  <img width="1436" height="835" alt="Screenshot 2026-10-13 at 4 59 55 PM" src="https://github.com/user-attachments/assets/aec12155-8ced-408d-bd3a-452d59358457" />
+  <img width="1436" height="835" alt="Screenshot 2026-10-13 at 5 00 03 PM" src="https://github.com/user-attachments/assets/b9a59e85-25c8-4cfc-b58e-4eb7a28cf324" />
+  <img width="1031" height="183" alt="Screenshot 2026-10-13 at 5 00 19 PM" src="https://github.com/user-attachments/assets/ec39f7e9-b93e-4f29-958b-a839a0b340d6" />
 
-## Tech stack
 
-| Layer | Choice | Why |
-|---|---|---|
-| Language / Framework | Java 21, Spring Boot 4 | Industry-standard backend stack |
-| Database | MongoDB (+ Atlas Vector Search) | Document model fits variable-shaped resume/job data; built-in vector search avoids a separate vector DB |
-| AI / Embeddings | Ollama (`nomic-embed-text`), local | Free, no API key, runs offline |
-| Messaging | Apache Kafka (KRaft mode) | Decouples the redirect from the click-count write — the redirect never blocks on Mongo |
-| Caching | Redis | Cache-aside pattern for hot short-link lookups |
-| Containerization | Docker, Docker Compose | Entire stack (`mongo`, `kafka`, `redis`, the app itself) starts with one command |
-| CI | GitHub Actions + Testcontainers | Every push is built and tested against a real, disposable MongoDB |
+
+- The API and UI were hosted on an Oracle Cloud VM during my job search. The hosted instance is temporary, so the video above shows it running. You can run the project yourself in a few minutes (see below).
+
+## Features
+
+- Create jobs and resumes; each is embedded by a local model (Ollama, `nomic-embed-text`, 768 dimensions) and stored in MongoDB
+- **Semantic matching:** MongoDB Atlas Vector Search (`$vectorSearch`, cosine similarity) returns the best jobs for a resume, and matches are saved
+- **Referral links:** short codes, a `302` redirect, and click counts
+- **Asynchronous click tracking:** the redirect publishes an event to Kafka and returns; a consumer updates the counter off the request path
+- **Redis cache-aside** for short-link lookups (30-minute TTL)
+- Dashboard endpoints (top links, links per job) and a web UI served by the app (one-click demo data, ranked matches, live click counts)
+- Validation, centralized error handling (`@RestControllerAdvice`), health checks via Actuator
+- CI with GitHub Actions and Testcontainers
 
 ## Architecture
 
-Client
-│
-▼
-Spring Boot App ──────► MongoDB (resumes, jobs, matches, short links)
-│ │
-│ └──► Redis (short-link cache, cache-aside)
-│
-└──► Kafka (link-clicks topic) ──► Consumer ──► MongoDB (click count update)
+```
+Browser (static page)
+   │  fetch('/api/...')
+   ▼
+Spring Boot app (:8080) ───────────► MongoDB  (resumes, jobs, matches, short_links; vector index)
+   │        │
+   │        └──► Ollama (embeddings, localhost:11434)
+   │
+   ├──► Redis  (short-link cache, cache-aside)
+   │
+   └──► Kafka topic "link-clicks" ──► consumer ──► MongoDB (click count)
+```
 
+**Add a job or resume:** validate → build text → Ollama embedding → save with the vector.
 
-- **Resume/Job matching**: text → Ollama embedding → stored as a vector field → MongoDB `$vectorSearch` aggregation finds the closest jobs by cosine similarity.
-- **Link redirects**: `GET /r/{code}` checks Redis first (cache-aside); on a miss, reads MongoDB and populates the cache. Either way, it publishes a click event to Kafka and returns immediately — the click count is updated by a separate consumer, off the request path.
-- **Referential integrity**: MongoDB has no foreign keys. Resume/Job/Match relationships are stored by id only (never embedded), and the application layer checks existence before saving a match.
+**Match:** read the resume's vector → `$vectorSearch` on jobs → ranked results → save matches.
 
-## Running it locally
+**Referral click (`GET /r/{code}`):** Redis lookup (on a miss read MongoDB and cache) → publish a click event to Kafka → `302` redirect. A consumer increments `clickCount` a moment later.
 
-**Prerequisite:** install [Ollama](https://ollama.com) natively and pull the embedding model — it isn't containerized:
+## Tech stack
+
+| Area | Choice | Why |
+|---|---|---|
+| Language / framework | Java 21, Spring Boot 4 | Standard backend stack |
+| Database | MongoDB (Atlas Local image) | Document model for resumes and jobs, with built-in vector search |
+| AI | Ollama + `nomic-embed-text` | Free, local, no API key |
+| Messaging | Apache Kafka (KRaft mode) | Decouples the redirect from the database write |
+| Cache | Redis | Cache-aside for hot short links |
+| Packaging | Docker, Docker Compose | One-command infrastructure |
+| CI | GitHub Actions, Testcontainers | Tests run against a real, disposable MongoDB |
+| UI | Static HTML + JavaScript | Served by Spring Boot, no extra deployment |
+
+## Project structure
+
+```
+src/main/java/com/jobmatch/job_match_tracker/
+  config/       Kafka producer/consumer, Ollama properties
+  controller/   REST endpoints (resumes, jobs, matches, links, redirect, dashboard)
+  dto/          Request/response objects with validation
+  exception/    Custom exceptions + global handler
+  model/        MongoDB documents (Resume, Job, Match, ShortLink)
+  repository/   Spring Data repositories
+  service/      Business logic, embeddings, Kafka producer/consumer
+src/main/resources/static/index.html   Web UI
+Dockerfile                              Multi-stage build
+docker-compose.yml                      Local compose (app in a bridge network)
+docker-compose.vm.yml                   Single-VM compose (app uses host networking)
+.github/workflows/ci.yml                CI pipeline
+```
+
+## API
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/ping` | Liveness check |
+| POST / GET | `/api/resumes` | Create (embeds) / list resumes |
+| GET / DELETE | `/api/resumes/{id}` | Fetch / delete a resume |
+| POST / GET | `/api/jobs` | Create (embeds) / list jobs |
+| GET / DELETE | `/api/jobs/{id}` | Fetch / delete a job |
+| GET | `/api/resumes/{id}/matches?limit=5` | Vector-search the best jobs |
+| GET | `/api/resumes/{id}/match-history` | Saved matches for a resume |
+| POST | `/api/links` | Create a short link |
+| GET | `/r/{code}` | Redirect and count the click |
+| GET | `/api/dashboard/top-links?limit=10` | Most-clicked links |
+| GET | `/api/dashboard/jobs/{jobId}/links` | Links created for a job |
+| GET | `/actuator/health` | Health, including MongoDB |
+
+## Running locally
+
+**Prerequisites:** Docker, Java 21, and [Ollama](https://ollama.com) with the model pulled:
 
 ```bash
 ollama pull nomic-embed-text
 ```
 
-Then start everything else with one command:
+1. Start the infrastructure:
 
 ```bash
-docker compose up -d --build
+docker compose -f docker-compose.vm.yml up -d mongo kafka redis
 ```
 
-This brings up the Spring Boot app, MongoDB, Kafka, and Redis together. The API is available at `http://localhost:8080`.
-
-**One-time setup:** the MongoDB vector search index must be created manually (MongoDB doesn't support this via a Java annotation):
+2. Create the collection and the vector index (one time; a fresh database has no `jobs` collection yet, and a search index needs one):
 
 ```bash
-docker exec -it jobmatch-mongo mongosh "mongodb://jobmatch:jobmatch123@localhost:27017/jobmatch?authSource=admin"
-```
-
-```javascript
+docker exec jobmatch-mongo mongosh "mongodb://jobmatch:jobmatch123@localhost:27017/jobmatch?authSource=admin" --quiet --eval '
+if (!db.getCollectionNames().includes("jobs")) { db.createCollection("jobs"); }
 db.jobs.createSearchIndex("jobs_vector_index", "vectorSearch", {
   fields: [{ type: "vector", path: "embedding", numDimensions: 768, similarity: "cosine" }]
-})
+})'
 ```
 
-## API overview
+3. Run the app:
 
-| Endpoint | Method | Purpose |
+```bash
+./mvnw spring-boot:run
+```
+
+4. Open **http://localhost:8080/**, click **Load demo data**, and try the matching, links, and dashboard.
+
+### Configuration
+
+| Property | Environment variable | Default |
 |---|---|---|
-| `/api/resumes` | POST, GET | Create / list resumes (generates an embedding on create) |
-| `/api/resumes/{id}` | GET, DELETE | Fetch / delete a resume |
-| `/api/jobs` | POST, GET | Create / list jobs (generates an embedding on create) |
-| `/api/jobs/{id}` | GET, DELETE | Fetch / delete a job |
-| `/api/resumes/{id}/matches` | GET | Vector-search the best-matching jobs for a resume |
-| `/api/resumes/{id}/match-history` | GET | Previously computed matches for a resume |
-| `/api/links` | POST | Create a short, trackable link |
-| `/r/{code}` | GET | Redirect + async click tracking |
-| `/api/dashboard/top-links` | GET | Most-clicked links |
-| `/api/dashboard/jobs/{jobId}/links` | GET | All links created for a job |
+| `spring.mongodb.uri` | `SPRING_MONGODB_URI` | `mongodb://jobmatch:jobmatch123@localhost:27017/jobmatch?authSource=admin&directConnection=true` |
+| `spring.kafka.bootstrap-servers` | `SPRING_KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` |
+| `spring.data.redis.host` | `SPRING_DATA_REDIS_HOST` | `localhost` |
+| `ollama.base-url` | `OLLAMA_BASEURL` | `http://localhost:11434` |
+| `app.base-url` | `APP_BASE_URL` | `http://localhost:8080` |
 
-## Key design decisions
+## Deploying on a single VM
 
-- **Reference, not embed** (Resume/Job/Match): they're independently created, updated, and queried — embedding would duplicate and go stale. See `Match`, which stores only `resumeId`/`jobId`.
-- **Async click tracking via Kafka**: the redirect endpoint originally wrote to MongoDB synchronously on every click; moving this behind a queue removed the database write from the response path entirely.
-- **Cache-aside for links, not `@Cacheable`**: implemented by hand to make the get-or-populate logic explicit and explainable, rather than hidden behind an annotation.
-- **`ErrorHandlingDeserializer` on the Kafka consumer**: prevents one malformed message ("poison pill") from crashing the whole consumer thread.
+Tested on an Ubuntu 22.04 VM (Oracle Cloud). Install Docker and Ollama on the VM, open port `8080` in **both** the cloud security list and the OS firewall, then:
 
-## Testing
+```bash
+git clone https://github.com/Khushbujamliya/job-match-tracker.git
+cd job-match-tracker
+docker compose -f docker-compose.vm.yml up -d --build
+```
+
+Create the collection and vector index as above. The compose file runs the app with host networking, so Kafka advertises `localhost:9092`.
+
+## Testing and CI
 
 ```bash
 ./mvnw test
 ```
 
-Integration tests use **Testcontainers** to spin up a real, disposable MongoDB — not mocks — so the tests verify actual query behavior, not just that methods were called.
+Integration tests use **Testcontainers** (a real MongoDB in Docker, not mocks) and run on every push through GitHub Actions.
+
+## Design decisions
+
+- **Reference, not embed:** resumes, jobs, and matches are independent and many-to-many, so matches store only ids. MongoDB has no foreign keys, so the service checks existence before saving.
+- **Kafka for click tracking:** the redirect used to write to MongoDB on every click. Publishing an event instead keeps the redirect fast, and a consumer applies the update. Delivery is at-least-once, so a click could rarely be double-counted, which is acceptable for a counter.
+- **Cache-aside by hand:** written explicitly (instead of `@Cacheable`) to make the get-or-populate logic and the TTL trade-off visible.
+- **`ErrorHandlingDeserializer` on the consumer:** one malformed message cannot crash the consumer thread.
+- **Vector search in MongoDB:** one database for documents and vectors, instead of a second system to keep in sync.
+
+## Challenges and what I learned
+
+- **Spring Boot 4 changes:** the MongoDB property moved to `spring.mongodb.uri`, and the test starters were split, so I used `MockMvc` built by hand.
+- **Kafka JSON and dates:** serializing `Instant` failed until I registered Jackson's `JavaTimeModule` on the serializer's `ObjectMapper`.
+- **Kafka advertised listeners:** the address a broker advertises must be reachable from the client's side, which differs between Docker's bridge network and host networking.
+- **MongoDB creates collections lazily:** the vector index failed on a fresh database until the collection existed.
+- **Two firewalls and rule order:** a cloud security list plus the OS-level `iptables`, where an ACCEPT rule placed below a REJECT never applies.
 
 ## Known limitations
 
-- Match scores reflect semantic *text* similarity, not verified qualifications — in production this would be one signal among several, not a sole decision-maker.
-- Ollama runs natively, outside the Docker stack, so this repo isn't fully one-command-portable to a machine without it pre-installed.
+- No authentication, so anyone can create data (which also triggers embedding work)
+- HTTP only, with no domain or TLS
+- Single node for every service, with no redundancy
+- Embeddings run on CPU, so the first request after idle can take seconds
+- Match scores measure semantic text similarity, not verified qualifications
+- Demo credentials are in the compose files (fine for local use, not for production)
+
+## Future improvements
+
+- JWT authentication and rate limiting
+- HTTPS through a reverse proxy
+- Generate embeddings asynchronously through Kafka
+- Create the collection and vector index automatically at startup
+- Pagination, metrics (Prometheus), and a React frontend
+
+## Author
+
+Khushbu Jamliya · [GitHub](https://github.com/Khushbujamliya) · [LinkedIn](https://www.linkedin.com/in/khushbu-jamliya)
